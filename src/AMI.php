@@ -1,6 +1,7 @@
 <?php
 
 namespace alexeevdv\ami;
+use Psr\Log\LoggerInterface;
 
 /**
  * Class AMI
@@ -19,7 +20,12 @@ class AMI
      * @access private
      * @var array
      */
-    private $event_handlers;
+    private $eventHandlers;
+
+    /**
+     * @var LoggerInterface
+     */
+    private $logger;
 
     /**
      * Constructor
@@ -27,9 +33,10 @@ class AMI
      * @param string $config is the name of the config file to parse or a parent agi from which to read the config
      * @param array $optconfig is an array of configuration vars and vals, stuffed into $this->config['asmanager']
      */
-    public function __construct($server, $port, $username, $secret)
+    public function __construct($server, $port, $username, $secret, LoggerInterface $logger)
     {
-        $this->connection = new Connection($server, $port, $username, $secret);
+        $this->logger = $logger;
+        $this->connection = new Connection($server, $port, $username, $secret, $logger);
     }
 
     public function __destruct()
@@ -48,7 +55,7 @@ class AMI
     {
         $request = new AMIRequest($action, $parameters);
         $this->connection->write($request->__toString());
-        return $this->wait_response();
+        return $this->waitResponse();
     }
 
     /**
@@ -65,8 +72,8 @@ class AMI
         $timeout = false;
         do {
             $type = null;
-            $parameters = array();
-            $buffer = trim(fgets($this->socket, 4096));
+            $parameters = [];
+            $buffer = $this->connection->readLine();
             while ($buffer != '') {
                 $a = strpos($buffer, ':');
                 if ($a) {
@@ -75,17 +82,17 @@ class AMI
                         if (substr($buffer, $a + 2) == 'Follows') {
                             // A follows response means there is a miltiline field that follows.
                             $parameters['data'] = '';
-                            $buff = fgets($this->socket, 4096);
+                            $buff = $this->connection->readLine();
                             while (substr($buff, 0, 6) != '--END ') {
                                 $parameters['data'] .= $buff;
-                                $buff = fgets($this->socket, 4096);
+                                $buff = $this->connection->readLine();
                             }
                         }
                     }
                     // store parameter in $parameters
                     $parameters[substr($buffer, 0, $a)] = substr($buffer, $a + 2);
                 }
-                $buffer = trim(fgets($this->socket, 4096));
+                $buffer = trim($this->connection->readLine());
             }
             // process response
             switch ($type) {
@@ -98,7 +105,7 @@ class AMI
                 case 'response':
                     break;
                 default:
-                    $this->log('Unhandled response packet from Manager: ' . print_r($parameters, true));
+                    $this->getLogger()->debug('Unhandled response packet from Manager: ' . print_r($parameters, true));
                     break;
             }
         } while ($type != 'response' && !$timeout);
@@ -126,7 +133,7 @@ class AMI
         ]);
 
         if ($respose['Response'] != 'Success') {
-            $this->log("Failed to login.");
+            $this->getLogger()->debug("Failed to login.");
             $this->connection->disconnect();
             return false;
         }
@@ -641,16 +648,6 @@ class AMI
     // *********************************************************************************************************
     // **                       MISC                                                                          **
     // *********************************************************************************************************
-    /*
-     * Log a message
-     *
-     * @param string $message
-     * @param integer $level from 1 to 4
-     */
-    protected function log($message, $level = 1)
-    {
-        // TODO
-    }
     /**
      * Add event handler
      *
@@ -695,10 +692,10 @@ class AMI
     {
         $event = strtolower($event);
         if (isset($this->event_handlers[$event])) {
-            $this->log("$event handler is already defined, not over-writing.");
+            $this->getLogger()->debug("$event handler is already defined, not over-writing.");
             return false;
         }
-        $this->event_handlers[$event] = $callback;
+        $this->eventHandlers[$event] = $callback;
         return true;
     }
 
@@ -713,19 +710,27 @@ class AMI
     {
         $ret = false;
         $e = strtolower($parameters['Event']);
-        $this->log("Got event.. $e");
+        $this->getLogger()->debug("Got event.. $e");
         $handler = '';
-        if (isset($this->event_handlers[$e])) {
-            $handler = $this->event_handlers[$e];
-        } elseif (isset($this->event_handlers['*'])) {
-            $handler = $this->event_handlers['*'];
+        if (isset($this->eventHandlers[$e])) {
+            $handler = $this->eventHandlers[$e];
+        } elseif (isset($this->eventHandlers['*'])) {
+            $handler = $this->eventHandlers['*'];
         }
         if (function_exists($handler)) {
-            $this->log("Execute handler $handler");
-            $ret = $handler($e, $parameters, $this->server, $this->port);
+            $this->getLogger()->debug("Execute handler $handler");
+            $ret = $handler($e, $parameters, $this->connection->getServer(), $this->connection->getPort());
         } else {
-            $this->log("No event handler for event '$e'");
+            $this->getLogger()->debug("No event handler for event '$e'");
         }
         return $ret;
+    }
+
+    /**
+     * @return LoggerInterface
+     */
+    protected function getLogger()
+    {
+        return $this->logger;
     }
 }

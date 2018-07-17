@@ -3,6 +3,7 @@
 namespace alexeevdv\ami;
 
 use Exception;
+use Psr\Log\LoggerInterface;
 
 /**
  * Class Connection
@@ -36,18 +37,24 @@ class Connection
     private $socket;
 
     /**
+     * @var LoggerInterface
+     */
+    private $logger;
+
+    /**
      * Connection constructor.
      * @param string $server
      * @param int $port
      * @param string $username
      * @param string $secret
      */
-    public function __construct($server, $port, $username, $secret)
+    public function __construct($server, $port, $username, $secret, LoggerInterface $logger)
     {
         $this->server = $server;
         $this->port = $port;
         $this->username = $username;
         $this->secret = $secret;
+        $this->logger = $logger;
     }
 
     /**
@@ -75,17 +82,14 @@ class Connection
             $this->socket = false;
         }
         if ($this->socket == false) {
-            // TODO log
-            //$this->log("Unable to connect to manager {$this->server}:{$this->port} ($errno): $errstr");
+            $this->getLogger()->debug("Unable to connect to manager {$this->server}:{$this->port} ($errno): $errstr");
             return false;
         }
 
         // read the header
         $header = $this->readLine();
         if ($header === null) {
-            // a problem.
-            // TODO log
-            //$this->log("Asterisk Manager header not received.");
+            $this->getLogger()->debug('Asterisk Manager header not received.');
             return false;
         }
         return true;
@@ -111,6 +115,22 @@ class Connection
     /**
      * @return string
      */
+    public function getServer()
+    {
+        return $this->server;
+    }
+
+    /**
+     * @return int
+     */
+    public function getPort()
+    {
+        return $this->port;
+    }
+
+    /**
+     * @return string
+     */
     public function getUsername()
     {
         return $this->username;
@@ -122,5 +142,13 @@ class Connection
     public function getSecret()
     {
         return $this->secret;
+    }
+
+    /**
+     * @return LoggerInterface
+     */
+    protected function getLogger()
+    {
+        return $this->logger;
     }
 }
